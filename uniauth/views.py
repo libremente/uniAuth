@@ -25,7 +25,7 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.cache import never_cache
-from django.shortcuts import render_to_response
+from django.shortcuts import render
 from saml2 import BINDING_HTTP_POST, BINDING_HTTP_REDIRECT
 from saml2.authn_context import (PASSWORD,
                                  AuthnBroker,
@@ -102,36 +102,47 @@ def sso_entry(request, binding):
         request.session['SAML']['message_id'] = req_info.message.id
         request.session['SAML']['issue_instant'] = req_info.message.issue_instant
 
+        sp_id = req_info.message.issuer.text
+        if sp_id:
+            sp = get_idp_sp_config().get(sp_id)
+            request.session['SAML']['sp'] = {}
+            request.session['SAML']['sp']['display_name'] = sp.get('display_name',
+                                                                   req_info.message.issuer.text)
+            request.session['SAML']['sp']['display_description'] = sp.get('display_description', '')
+            mduui = IDP.metadata[sp_id]['spsso_descriptor'][0]\
+                     .get('extensions', {}).get('extension_elements', [{}])
+            request.session['SAML']['sp']['logo'] = mduui[0].get('text', '')
+
 
     except IncorrectlySigned as exp:
-        return render_to_response('error.html',
-                                  {'exception_type': exp,
-                                   'exception_msg': _("Incorrectly signed"),
-                                   'extra_message': _('SP Metadata '
-                                                      'is changed, expired '
-                                                      'or unavailable.')},
-                                   status=403)
+        return render(request, 'error.html',
+                      {'exception_type': exp,
+                       'exception_msg': _("Incorrectly signed"),
+                       'extra_message': _('SP Metadata '
+                                          'is changed, expired '
+                                          'or unavailable.')},
+                       status=403)
     except Exception as exp:
-        return render_to_response('error.html',
-                                  {'exception_type': exp},
-                                   status=403)
+        return render(request, 'error.html',
+                      {'exception_type': exp},
+                       status=403)
 
     try:
         resp_args = IDP.response_args(req_info.message)
     except UnknownSystemEntity as exp:
-        return render_to_response('error.html',
-                                  {'exception_type': exp,
-                                   'exception_msg': _("This SP is not federated"),
-                                   'extra_message': _('Metadata is missing')},
-                                   status=403)
+        return render(request, 'error.html',
+                      {'exception_type': exp,
+                       'exception_msg': _("This SP is not federated"),
+                       'extra_message': _('Metadata is missing')},
+                       status=403)
 
     if settings.SAML_DISALLOW_UNDEFINED_SP:
         if resp_args.get('sp_entity_id') not in get_idp_sp_config().keys():
-            return render_to_response('error.html',
-                                      {'exception_type': _("This SP is not allowed to access to this Service"),
-                                       'exception_msg': _("Attribute Processor needs "
-                                                          "to be configured and undefined SP are not Allowed.")},
-                                      status=403)
+            return render(request, 'error.html',
+                          {'exception_type': _("This SP is not allowed to access to this Service"),
+                           'exception_msg': _("Attribute Processor needs "
+                                              "to be configured and undefined SP are not Allowed.")},
+                          status=403)
     # end check
 
     return HttpResponseRedirect(reverse('uniauth:saml_login_process'))
@@ -152,25 +163,25 @@ def get_IDP(idp_conf=settings.SAML_IDP_CONFIG):
     try:
         IDP = get_idp_config(idp_conf)
     except MetadataNotFound as exp:
-        return render_to_response('error.html',
-                                  {'exception_type': _("Unable to find Service "
-                                                       "Provider Metadata"),
-                                   'exception_msg': "",
-                                   'extra_message': _('SP Metadata are expired '
-                                                      'or not found. Please contact '
-                                                      'IDP technical support for '
-                                                      'better acknowledge')},
-                                   status=403)
+        return render(request, 'error.html',
+                      {'exception_type': _("Unable to find Service "
+                                           "Provider Metadata"),
+                       'exception_msg': "",
+                       'extra_message': _('SP Metadata are expired '
+                                          'or not found. Please contact '
+                                          'IDP technical support for '
+                                          'better acknowledge')},
+                       status=403)
 
     except MetadataCorruption as exp:
         logger.debug(exp)
-        return render_to_response('error.html',
-                                  {'exception_type': _("Some Metadata "
-                                                       "seems to be corrupted"),
-                                   'exception_msg': "",
-                                   'extra_message': _('This is a security exception. '
-                                                      'Please contact IdP staff.')},
-                                   status=403)
+        return render(request, 'error.html',
+                      {'exception_type': _("Some Metadata "
+                                           "seems to be corrupted"),
+                       'exception_msg': "",
+                       'extra_message': _('This is a security exception. '
+                                          'Please contact IdP staff.')},
+                       status=403)
     return IDP
 
 
@@ -538,18 +549,21 @@ class LoginAuthView(LoginView):
     template_name = "saml_login.html"
     form_class = LoginForm
 
+    def dispatch(self, request, *args, **kwargs):
+        import pdb; pdb.set_trace()
+
     def form_invalid(self, form):
         """If the form is invalid, returns a generic message
         status code 200 to prevent brute force attack based to response code!
         """
-        return render_to_response('error.html',
-                                  {'exception_type':_("You cannot access to this service"),
-                                   'exception_msg':_("Your Username or Password is invalid, "
-                                                     "your account could be expired or been "
-                                                     "disabled due to many login attempts."),
-                                   'extra_message':_("Please access to 'Forgot your Password' "
-                                                     "procedure, before contact the help desk.")},
-                                  status=200)
+        return render(request, 'error.html',
+                      {'exception_type':_("You cannot access to this service"),
+                       'exception_msg':_("Your Username or Password is invalid, "
+                                         "your account could be expired or been "
+                                         "disabled due to many login attempts."),
+                       'extra_message':_("Please access to 'Forgot your Password' "
+                                         "procedure, before contact the help desk.")},
+                      status=200)
 
     def form_valid(self, form):
         """Security check complete. Log the user in."""
@@ -569,11 +583,11 @@ class LoginAuthView(LoginView):
         mins = getattr(settings, 'SESSION_COOKIE_AGE', 600)
         if issue_instant < timezone.make_naive((now-datetime.timedelta(minutes=mins)),
                                                timezone.get_current_timezone()):
-            return render_to_response('error.html',
-                                      {'exception_type': _("You take too long to authenticate!"),
-                                       'exception_msg': _("Your request is expired"),
-                                       'extra_message': _('{} minutes are passed').format(mins)},
-                                       status=403)
+            return render(request, 'error.html',
+                          {'exception_type': _("You take too long to authenticate!"),
+                           'exception_msg': _("Your request is expired"),
+                           'extra_message': _('{} minutes are passed').format(mins)},
+                           status=403)
         # end check issue instant
 
         user = form.get_user()
@@ -642,7 +656,7 @@ class LoginProcessView(LoginRequiredMixin, IdPHandlerViewMixin, View):
             destination=self.resp_args['destination'],
             relay_state=request.session['SAML']['RelayState'])
 
-        logger.debug("SAML Authn Response [\n{}]".format(repr_saml(self.authn_resp)))
+        logger.debug("SAML Authn request Response [\n{}]".format(repr_saml(self.authn_resp)))
         return self.render_response(request, html_response)
 
 
@@ -723,18 +737,18 @@ class UserAgreementScreen(ErrorHandler, LoginRequiredMixin, View):
     def post(self, request, *args, **kwargs):
         form = AgreementForm(request.POST)
         if not form.is_valid():
-            return render_to_response('error.html',
-                                      {'exception_type':_("Invalid submission")},
-                                      status=403)
+            return render(request, 'error.html',
+                          {'exception_type':_("Invalid submission")},
+                          status=403)
 
         confirm = int(form.cleaned_data['confirm'])
         dont_show_again = form.cleaned_data['dont_show_again']
 
         if not confirm:
             logout(request)
-            return render_to_response('error.html',
-                                      {'exception_type':_("You cannot access to this service")},
-                                      status=403)
+            return render(request, 'error.html',
+                          {'exception_type':_("You cannot access to this service")},
+                          status=403)
 
         if dont_show_again:
             record = AgreementRecord(
